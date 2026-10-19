@@ -48,9 +48,14 @@ Key files:
 - `backend/main.py` — HTTP API and request validation
 - `backend/queries.py` — graph reads/writes and parameterized Cypher
 - `backend/investigator.py` — investigation stages and deterministic ranking
+- `backend/agent.py` — bounded tool-calling agent with fail-closed Cypher policy
+- `backend/algorithms.py` — native FalkorDB algorithms (PageRank, Betweenness, WCC)
+- `backend/grounding.py` — anti-hallucination graph fact verification
+- `backend/benchmark.py` — fair comparative evaluation suite (Graph-Native vs Keyword Baseline)
 - `backend/surgery.py` — isolated graph-copy simulation, comparison, audit, cleanup
 - `backend/seed.py` — idempotent synthetic demo graph
-- `frontend/src/App.jsx` — React UI
+- `frontend/src/App.jsx` — 6-tab React UI command center
+- `docs/FINAL_VERIFICATION_REPORT.md` — full release audit and verification report
 - `docs/graph-model.md` — graph schema, queries, and score formula
 - `docs/runbooks.md` — synthetic, read-only runbook content
 

@@ -78,21 +78,23 @@ def test_contradiction_red_herring_penalized():
 def test_abstention_on_close_call_or_tie():
     # Insert a temporary synthetic incident where two candidates tie on score >= 4.0
     now = 1792000000
-    graph.run("CREATE (i:Incident {id:'INC-SYNTH-TIE', title:'Synthetic Tie', severity:'SEV1', ts:$ts, pattern:'latency_spike', status:'open', summary:'Tie test', synthetic:true})-[:AFFECTS]->(:Service {id:'checkout-service'})", {"ts": now})
-    # Both order-service and inventory-service are 1 hop from checkout-service and have no deployments/history
-    # Giving each two supporting evidence items gives them identical scores (5.40 >= 4.0)
+    graph.run("CREATE (s_gw:Service {id:'synth-gateway', name:'Synth Gateway', tier:1, kind:'service', synthetic:true}), "
+              "(sa:Service {id:'synth-svc-a', name:'Synth A', tier:2, kind:'service', synthetic:true}), "
+              "(sb:Service {id:'synth-svc-b', name:'Synth B', tier:2, kind:'service', synthetic:true}), "
+              "(s_gw)-[:DEPENDS_ON]->(sa), (s_gw)-[:DEPENDS_ON]->(sb), "
+              "(i:Incident {id:'INC-SYNTH-TIE', title:'Synthetic Tie', severity:'SEV1', ts:$ts, pattern:'latency_spike', status:'open', summary:'Tie test', synthetic:true})-[:AFFECTS]->(s_gw)", {"ts": now})
     graph.run("CREATE (e1:Evidence {id:'EV-TIE-1', kind:'metric', polarity:'supports', text:'sup1', ts:$ts, synthetic:true}), "
               "(e2:Evidence {id:'EV-TIE-2', kind:'metric', polarity:'supports', text:'sup2', ts:$ts, synthetic:true}), "
               "(e3:Evidence {id:'EV-TIE-3', kind:'log', polarity:'supports', text:'sup3', ts:$ts, synthetic:true}), "
               "(e4:Evidence {id:'EV-TIE-4', kind:'log', polarity:'supports', text:'sup4', ts:$ts, synthetic:true}), "
-              "(i:Incident {id:'INC-SYNTH-TIE'})-[:HAS_EVIDENCE]->(e1), (e1)-[:ABOUT]->(:Service {id:'order-service'}), "
-              "(i)-[:HAS_EVIDENCE]->(e2), (e2)-[:ABOUT]->(:Service {id:'order-service'}), "
-              "(i)-[:HAS_EVIDENCE]->(e3), (e3)-[:ABOUT]->(:Service {id:'inventory-service'}), "
-              "(i)-[:HAS_EVIDENCE]->(e4), (e4)-[:ABOUT]->(:Service {id:'inventory-service'})", {"ts": now})
+              "(i:Incident {id:'INC-SYNTH-TIE'})-[:HAS_EVIDENCE]->(e1), (e1)-[:ABOUT]->(:Service {id:'synth-svc-a'}), "
+              "(i)-[:HAS_EVIDENCE]->(e2), (e2)-[:ABOUT]->(:Service {id:'synth-svc-a'}), "
+              "(i)-[:HAS_EVIDENCE]->(e3), (e3)-[:ABOUT]->(:Service {id:'synth-svc-b'}), "
+              "(i)-[:HAS_EVIDENCE]->(e4), (e4)-[:ABOUT]->(:Service {id:'synth-svc-b'})", {"ts": now})
     try:
         r = inv.investigate("INC-SYNTH-TIE", persist=False)
         assert r is not None
-        # Both order-service and inventory-service tie at 5.40 >= 4.0
+        assert len(r["candidates"]) >= 2
         assert r["candidates"][0]["score"] == r["candidates"][1]["score"]
         assert r["candidates"][0]["score"] >= 4.0
         # Because gap < CLOSE_CALL_MARGIN (1.0), status must abstain to inconclusive
@@ -103,6 +105,7 @@ def test_abstention_on_close_call_or_tie():
     finally:
         graph.run("MATCH (i:Incident {id:'INC-SYNTH-TIE'}) DETACH DELETE i")
         graph.run("MATCH (e:Evidence) WHERE e.id IN ['EV-TIE-1', 'EV-TIE-2', 'EV-TIE-3', 'EV-TIE-4'] DETACH DELETE e")
+        graph.run("MATCH (s:Service) WHERE s.id IN ['synth-gateway', 'synth-svc-a', 'synth-svc-b'] DETACH DELETE s")
 
 
 def test_missing_data_flags_and_no_fabrication():
