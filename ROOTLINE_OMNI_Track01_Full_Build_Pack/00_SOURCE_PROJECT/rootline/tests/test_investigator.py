@@ -64,3 +64,54 @@ def test_empty_graph_is_handled():
     graph.delete_graph()
     graph.reset()
     assert inv.investigate("INC-2026-101") is None
+
+
+def test_contradiction_red_herring_penalized():
+    # payment-service has deployment DEP-502 (recent) but EV-101-5 contradicts it
+    r = inv.investigate("INC-2026-101", persist=False)
+    pay = next(c for c in r["candidates"] if c["service_id"] == "payment-service")
+    assert pay["score_breakdown"]["evidence_contradiction"] < 0
+    assert "EV-101-5" in pay["contradicting_evidence_ids"]
+    assert any("Contradicting evidence" in lim for lim in pay["limitations"])
+
+
+def test_abstention_on_close_call_or_tie():
+    # Insert a temporary synthetic incident where two candidates tie on score >= 4.0
+    now = 1792000000
+    graph.run("CREATE (i:Incident {id:'INC-SYNTH-TIE', title:'Synthetic Tie', severity:'SEV1', ts:$ts, pattern:'latency_spike', status:'open', summary:'Tie test', synthetic:true})-[:AFFECTS]->(:Service {id:'checkout-service'})", {"ts": now})
+    # Both order-service and inventory-service are 1 hop from checkout-service and have no deployments/history
+    # Giving each two supporting evidence items gives them identical scores (5.40 >= 4.0)
+    graph.run("CREATE (e1:Evidence {id:'EV-TIE-1', kind:'metric', polarity:'supports', text:'sup1', ts:$ts, synthetic:true}), "
+              "(e2:Evidence {id:'EV-TIE-2', kind:'metric', polarity:'supports', text:'sup2', ts:$ts, synthetic:true}), "
+              "(e3:Evidence {id:'EV-TIE-3', kind:'log', polarity:'supports', text:'sup3', ts:$ts, synthetic:true}), "
+              "(e4:Evidence {id:'EV-TIE-4', kind:'log', polarity:'supports', text:'sup4', ts:$ts, synthetic:true}), "
+              "(i:Incident {id:'INC-SYNTH-TIE'})-[:HAS_EVIDENCE]->(e1), (e1)-[:ABOUT]->(:Service {id:'order-service'}), "
+              "(i)-[:HAS_EVIDENCE]->(e2), (e2)-[:ABOUT]->(:Service {id:'order-service'}), "
+              "(i)-[:HAS_EVIDENCE]->(e3), (e3)-[:ABOUT]->(:Service {id:'inventory-service'}), "
+              "(i)-[:HAS_EVIDENCE]->(e4), (e4)-[:ABOUT]->(:Service {id:'inventory-service'})", {"ts": now})
+    try:
+        r = inv.investigate("INC-SYNTH-TIE", persist=False)
+        assert r is not None
+        # Both order-service and inventory-service tie at 5.40 >= 4.0
+        assert r["candidates"][0]["score"] == r["candidates"][1]["score"]
+        assert r["candidates"][0]["score"] >= 4.0
+        # Because gap < CLOSE_CALL_MARGIN (1.0), status must abstain to inconclusive
+        assert r["conclusion"]["status"] == "inconclusive"
+        assert r["conclusion"]["top_candidate"] is None
+        assert "close call" in r["conclusion"]["note"].lower()
+        assert r["recommended_action"]["kind"] == "collect_evidence"
+    finally:
+        graph.run("MATCH (i:Incident {id:'INC-SYNTH-TIE'}) DETACH DELETE i")
+        graph.run("MATCH (e:Evidence) WHERE e.id IN ['EV-TIE-1', 'EV-TIE-2', 'EV-TIE-3', 'EV-TIE-4'] DETACH DELETE e")
+
+
+def test_missing_data_flags_and_no_fabrication():
+    r = inv.investigate("INC-2026-101", persist=False)
+    for c in r["candidates"]:
+        assert "missing_data" in c
+        assert isinstance(c["missing_data"]["owner"], bool)
+        assert isinstance(c["missing_data"]["runbooks"], bool)
+        assert isinstance(c["missing_data"]["deployment"], bool)
+        # Verify runbooks are not fabricated when missing
+        if c["missing_data"]["runbooks"]:
+            assert len(c["runbooks"]) == 0
