@@ -1,0 +1,338 @@
+ORIGINAL GEMINI CODE EXCERPT — UNVERIFIED
+Title: Step-by-step from-scratch backend module snippets
+Source: 01_GEMINI_ORIGINALS/Gemini_Original_Proposal_2026-10-19_033120.txt
+Source line range: 2834-3162
+
+IMPORTANT: This extract preserves the proposal text in its original line order. It has not been syntax-checked, integrated, or tested. Use the complete original transcript for context. Do not assume it is runnable or production-safe.
+Specific note: This excerpt contains several separate modules and run commands in one transcript section; split modules manually and test each before use.
+==============================================================================
+
+Step 1: Project Directory Structure Setup
+Open your terminal in an empty folder and create the following directory layout:
+
+Plaintext
+rootline/
+├── backend/
+│   ├── __init__.py
+│   ├── graph.py
+│   ├── seed.py
+│   ├── queries.py
+│   ├── investigator.py
+│   ├── surgery.py
+│   ├── tog_agent.py
+│   └── main.py
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── main.jsx
+│   │   └── styles.css
+│   ├── index.html
+│   ├── package.json
+│   └── vite.config.js
+├── tests/
+│   ├── conftest.py
+│   ├── test_graph.py
+│   ├── test_investigator.py
+│   ├── test_surgery.py
+│   └── test_api.py
+├── .env.example
+├── requirements.txt
+└── requirements-dev.txt
+Step 2: Configure Dependency Files
+requirements.txt
+Plaintext
+fastapi>=0.110.0
+uvicorn>=0.28.0
+falkordb>=1.0.8
+pydantic>=2.6.0
+python-dotenv>=1.0.1
+requirements-dev.txt
+Plaintext
+-r requirements.txt
+pytest>=8.0.0
+httpx>=0.27.0
+.env.example
+Code snippet
+FALKORDB_HOST=localhost
+FALKORDB_PORT=6379
+FALKORDB_PASSWORD=
+FALKORDB_GRAPH=rootline
+Step 3: Implement Core Backend Modules
+1. backend/graph.py (FalkorDB Connection Manager)
+Python
+import os
+from dotenv import load_dotenv
+from falkordb import FalkorDB
+
+load_dotenv()
+
+FALKORDB_HOST = os.getenv("FALKORDB_HOST", "localhost")
+FALKORDB_PORT = int(os.getenv("FALKORDB_PORT", 6379))
+FALKORDB_PASSWORD = os.getenv("FALKORDB_PASSWORD", None)
+GRAPH_NAME = os.getenv("FALKORDB_GRAPH", "rootline")
+
+def get_client() -> FalkorDB:
+    if FALKORDB_PASSWORD:
+        return FalkorDB(host=FALKORDB_HOST, port=FALKORDB_PORT, password=FALKORDB_PASSWORD)
+    return FalkorDB(host=FALKORDB_HOST, port=FALKORDB_PORT)
+
+def get_graph(name: str = GRAPH_NAME):
+    client = get_client()
+    return client.select_graph(name)
+2. backend/seed.py (Synthetic Graph Fixture)
+Python
+from .graph import get_graph
+
+def seed_database(graph=None):
+    g = graph or get_graph()
+    try:
+        g.delete()
+    except Exception:
+        pass
+    g = graph or get_graph()
+
+    cypher = """
+    CREATE
+      (s1:Service {id: 'checkout-service', name: 'Checkout Service', tier: 'Tier-0', status: 'DEGRADED'}),
+      (s2:Service {id: 'payment-service', name: 'Payment Service', tier: 'Tier-0', status: 'WARN'}),
+      (s3:Service {id: 'inventory-service', name: 'Inventory Service', tier: 'Tier-1', status: 'HEALTHY'}),
+      (s4:Service {id: 'cache-redis', name: 'Redis Cache Cluster', tier: 'Tier-0', status: 'CRITICAL'}),
+      (s5:Service {id: 'message-queue', name: 'Message Queue Broker', tier: 'Tier-1', status: 'CRITICAL'}),
+      (s6:Service {id: 'search-service', name: 'Search Microservice', tier: 'Tier-2', status: 'HEALTHY'}),
+      (s7:Service {id: 'search-index', name: 'Search Elasticsearch Index', tier: 'Tier-2', status: 'HEALTHY'}),
+
+      (t1:Team {id: 'team-platform', name: 'Platform Reliability', slack: '#sre-warroom'}),
+      (t2:Team {id: 'team-payments', name: 'Payments Squad', slack: '#payments-oncall'}),
+
+      (dep1:Deployment {id: 'DEP-901', version: 'v4.12.8', ts: 18, summary: 'Bumped redis pool timeout & Lua session script'}),
+      (dep2:Deployment {id: 'DEP-902', version: 'v2.4.1', ts: 35, summary: 'Updated Stripe webhook retry headers'}),
+
+      (ev1:Evidence {id: 'EV-1', polarity: 'supporting', kind: 'ERROR_SPIKE', text: 'Redis maxclients reached (99.8% connection pool saturation)'}),
+      (ev2:Evidence {id: 'EV-2', polarity: 'contradicting', kind: 'CANARY_PASS', text: 'Payment Service synthetic canary test passed 100% when mocked against local cache'}),
+
+      (inc1:Incident {id: 'INC-2026-101', title: 'Checkout 504 Gateway Timeouts During Flash Sale', severity: 'SEV-1', status: 'OPEN'}),
+      (inc2:Incident {id: 'INC-2026-102', title: 'Order Confirmation Delay & Event Backlog', severity: 'SEV-1', status: 'OPEN'}),
+      (inc3:Incident {id: 'INC-2026-103', title: 'Intermittent Webhook Jitter (Thin Evidence Test)', severity: 'SEV-3', status: 'OPEN'}),
+
+      (rb:Runbook {id: 'rb-redis-pool', title: 'Redis Saturation Triage & Flush', steps: ['1. Check active connections via CLIENT LIST', '2. Flush orphan keys via EVAL', '3. Scale maxmemory-policy']}),
+      (adr:ADR {id: 'adr-019', title: 'Connection Pool Max-Idle Cap', decision: 'Max connections per pod must not exceed 120.'}),
+
+      (inc1)-[:AFFECTS]->(s1),
+      (inc2)-[:AFFECTS]->(s3),
+      (inc3)-[:AFFECTS]->(s6),
+
+      (s1)-[:DEPENDS_ON]->(s2),
+      (s1)-[:DEPENDS_ON]->(s3),
+      (s2)-[:DEPENDS_ON]->(s4),
+      (s3)-[:DEPENDS_ON]->(s4),
+      (s5)-[:DEPENDS_ON]->(s4),
+      (s6)-[:DEPENDS_ON]->(s7),
+
+      (t1)-[:OWNS]->(s4),
+      (t2)-[:OWNS]->(s2),
+
+      (s4)-[:RECENT_DEPLOYMENT]->(dep1),
+      (s2)-[:RECENT_DEPLOYMENT]->(dep2),
+
+      (inc1)-[:HAS_EVIDENCE]->(ev1),
+      (inc1)-[:HAS_EVIDENCE]->(ev2),
+      (ev1)-[:ABOUT]->(s4),
+      (ev2)-[:ABOUT]->(s2),
+
+      (s4)-[:HAS_RUNBOOK]->(rb),
+      (s4)-[:GOVERNED_BY]->(adr)
+    """
+    g.query(cypher)
+    return {"services": 7, "incidents": 3, "evidence": 2}
+
+if __name__ == "__main__":
+    res = seed_database()
+    print("Seeded successfully:", res)
+3. backend/queries.py (Parameterized Cypher Traversals)
+Python
+def query_incident_graph(incident_id: str, graph):
+    cypher = """
+    MATCH (inc:Incident {id: $inc_id})-[:AFFECTS]->(entry:Service)
+    MATCH p = (entry)-[:DEPENDS_ON*1..4]->(cand:Service)
+    OPTIONAL MATCH (cand)-[:RECENT_DEPLOYMENT]->(dep:Deployment)
+    OPTIONAL MATCH (inc)-[:HAS_EVIDENCE]->(ev:Evidence)-[:ABOUT]->(cand)
+    RETURN cand.id AS service_id, cand.name AS service_name, cand.tier AS tier,
+           min(length(p)) AS hops, collect(DISTINCT [n IN nodes(p) | n.id]) AS paths,
+           dep.id AS dep_id, dep.version AS dep_ver, dep.ts AS dep_ts, dep.summary AS dep_sum,
+           collect(DISTINCT {id: ev.id, polarity: ev.polarity, kind: ev.kind, text: ev.text}) AS evidences
+    """
+    return graph.query(cypher, {"inc_id": incident_id})
+4. backend/investigator.py (Deterministic Scoring & Heuristics)
+Python
+from .queries import query_incident_graph
+
+def investigate_incident(incident_id: str, persist: bool = True, graph=None):
+    from .graph import get_graph
+    g = graph or get_graph()
+    res = query_incident_graph(incident_id, g)
+    if not res.result_set:
+        raise ValueError(f"Incident {incident_id} not found")
+
+    candidates = []
+    for row in res.result_set:
+        sid, sname, stier, hops, paths, dep_id, dep_ver, dep_ts, dep_sum, evidences = row
+        valid_evs = [e for e in evidences if e.get("id")]
+        sup_score = sum(3.5 for e in valid_evs if e.get("polarity") == "supporting")
+        con_score = sum(4.0 for e in valid_evs if e.get("polarity") == "contradicting")
+        hop_bonus = float(hops) * 0.5
+        total_score = round(sup_score - con_score + hop_bonus + (2.0 if dep_id else 0.0), 2)
+
+        candidates.append({
+            "service_id": sid,
+            "service_name": sname,
+            "tier": stier,
+            "hops": hops,
+            "paths": paths,
+            "score": total_score,
+            "evidences": valid_evs,
+            "contradicting_evidence": [e for e in valid_evs if e.get("polarity") == "contradicting"],
+        })
+
+    candidates.sort(key=lambda x: x["score"], reverse=True)
+    top = candidates[0] if candidates else None
+    status = "ranked" if top and top["score"] >= 3.5 else "inconclusive"
+
+    return {
+        "id": f"INV-{incident_id}",
+        "incident": {"id": incident_id, "affected_service": top["service_id"] if top else "unknown"},
+        "status": status,
+        "top_candidate": top["service_id"] if status == "ranked" else None,
+        "candidates": candidates,
+        "recommended_actions": [{"action_id": "ACT-01", "text": "Inspect Redis connection pool metrics and execute runbook rb-redis-pool"}],
+        "stage_trace": [{"stage": "dependency_traversal", "duration_ms": 12.4}, {"stage": "evidence_scoring", "duration_ms": 8.1}],
+    }
+5. backend/surgery.py (Pearl do-Calculus Graph Isolation via GRAPH.COPY)
+Python
+import uuid
+from .investigator import investigate_incident
+
+def simulate_edge_removal(incident_id: str, edges: list[dict[str, str]], graph=None):
+    from .graph import get_graph
+    g = graph or get_graph()
+    base_name = g.name
+    sim_name = f"{base_name}_sim_{uuid.uuid4().hex[:6]}"
+
+    before_rep = investigate_incident(incident_id, persist=False, graph=g)
+
+    client = g.client if hasattr(g, "client") else get_graph().client
+    try:
+        g.copy(sim_name)
+        sim_graph = client.select_graph(sim_name)
+    except Exception:
+        # Fallback isolation
+        sim_graph = client.select_graph(sim_name)
+        from .seed import seed_database
+        seed_database(sim_graph)
+
+    for edge in edges:
+        sim_graph.query(
+            "MATCH (a:Service {id: $src})-[r:DEPENDS_ON]->(b:Service {id: $dst}) DELETE r",
+            {"src": edge["source"], "dst": edge["target"]}
+        )
+
+    after_rep = investigate_incident(incident_id, persist=False, graph=sim_graph)
+
+    try:
+        sim_graph.delete()
+        cleaned = True
+    except Exception:
+        cleaned = False
+
+    return {
+        "before": before_rep,
+        "after": after_rep,
+        "comparison": {
+            "top_changed": before_rep.get("top_candidate") != after_rep.get("top_candidate"),
+            "before_top": before_rep.get("top_candidate"),
+            "after_top": after_rep.get("top_candidate"),
+        },
+        "safety": {
+            "baseline_unchanged": True,
+            "temp_graph_deleted": cleaned,
+            "isolation_method": "GRAPH.COPY",
+        }
+    }
+6. backend/tog_agent.py (Track 01 Agent Engine)
+(Use the complete tog_agent.py code provided in the previous section).
+
+7. backend/main.py (FastAPI Entry Point)
+Python
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from .graph import get_graph
+from .seed import seed_database
+from .investigator import investigate_incident
+from .tog_agent import run_tog_agent, handle_mcp_jsonrpc, evaluate_measured_ablation, MCP_TOOLS
+
+app = FastAPI(title="ROOTLINE OMNI | Track 01 Graph Agent OS")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+class AgentRequest(BaseModel):
+    prompt: str
+    incident_id: str = "INC-2026-101"
+
+@app.get("/api/health")
+def health_check():
+    try:
+        g = get_graph()
+        g.query("RETURN 1")
+        return {"status": "healthy", "database": "connected"}
+    except Exception as e:
+        return {"status": "unhealthy", "error": str(e)}
+
+@app.post("/api/seed")
+def seed_endpoint():
+    return seed_database()
+
+@app.post("/api/agent/tog")
+def agent_tog_endpoint(req: AgentRequest):
+    return run_tog_agent(req.prompt, req.incident_id)
+
+@app.post("/api/mcp/rpc")
+def mcp_rpc_endpoint(payload: dict):
+    return handle_mcp_jsonrpc(payload)
+
+@app.get("/api/mcp/tools")
+def mcp_tools_endpoint():
+    return {"tools": MCP_TOOLS}
+
+@app.get("/api/evaluation/ablation")
+def ablation_endpoint():
+    return evaluate_measured_ablation()
+Step 4: Run and Verify Locally
+Start FalkorDB in Docker:
+
+PowerShell
+docker run -d --name rootline-falkordb -p 6379:6379 -p 3000:3000 falkordb/falkordb:latest
+Set Up Python Environment & Run Tests:
+
+PowerShell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements-dev.txt
+python -m backend.seed
+pytest -q
+Start the FastAPI Backend:
+
+PowerShell
+uvicorn backend.main:app --host 127.0.0.1 --port 8010 --reload
+Step 5: Final Verification & Submission Checklist
+Test MCP JSON-RPC: Send a POST request to [http://127.0.0.1:8010/api/mcp/rpc](http://127.0.0.1:8010/api/mcp/rpc) with {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}.
+
+Test Agent Loop: Send a POST request to [http://127.0.0.1:8010/api/agent/tog](http://127.0.0.1:8010/api/agent/tog) with {"prompt": "Investigate INC-2026-101", "incident_id": "INC-2026-101"}.
+
+Push to GitHub: Commit your verified codebase and push to your public repository (shashankkumar8/ROOTLINE-OMNI).   
+PDF
++ 1
+
+
+
+
+

@@ -1,0 +1,300 @@
+ORIGINAL GEMINI CODE EXCERPT — UNVERIFIED
+Title: The Definitive, Polished Engine (tog_agent.py)
+Source: 01_GEMINI_ORIGINALS/Gemini_Original_Proposal_2026-10-19_033120.txt
+Source line range: 2537-2827
+
+IMPORTANT: This extract preserves the proposal text in its original line order. It has not been syntax-checked, integrated, or tested. Use the complete original transcript for context. Do not assume it is runnable or production-safe.
+Specific note: The source describes this as production-ready, but that label is from the proposal and has not been independently validated.
+==============================================================================
+
+"""
+ROOTLINE OMNI — Track 01: Research-Backed Think-on-Graph (ToG) & Pearl do-Calculus Engine.
+Implements:
+1. Dynamic Entity Resolution against FalkorDB (unknown_entity guardrail).
+2. Read-Only Enforcement via GRAPH.RO_QUERY.
+3. Think-on-Graph Iterative Beam Search & Evidence Pruning.
+4. CausalRCA PageRank Centrality & Multi-Hop Blast Radius.
+5. Pearl do-Calculus Counterfactual Graph Surgery in an isolated GRAPH.COPY clone.
+6. Standard JSON-RPC 2.0 Model Context Protocol (MCP) Server.
+"""
+from __future__ import annotations
+
+import re
+import time
+from datetime import datetime, timezone
+from typing import Any
+
+from .graph import get_graph
+from .investigator import investigate_incident
+from .surgery import simulate_edge_removal
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _ro_query(graph, cypher: str, params: dict[str, Any] | None = None):
+    """Enforces database-level read-only safety using FalkorDB's native GRAPH.RO_QUERY."""
+    if hasattr(graph, "ro_query"):
+        return graph.ro_query(cypher, params or {})
+    return graph.query(cypher, params or {})
+
+
+# ============================================================================
+# 1. GRAPH-BACKED ENTITY RESOLUTION & GUARDRAILS
+# ============================================================================
+SERVICE_ALIASES = {
+    "redis": "cache-redis",
+    "cache": "cache-redis",
+    "payment": "payment-service",
+    "payments": "payment-service",
+    "checkout": "checkout-service",
+    "inventory": "inventory-service",
+    "queue": "message-queue",
+    "mq": "message-queue",
+    "search": "search-service",
+    "index": "search-index",
+    "auth": "auth-service",
+    "notification": "notification-service",
+    "order": "order-service",
+    "gateway": "api-gateway",
+}
+
+STOPWORDS = {
+    "multi-hop", "root-cause", "blast-radius", "short-path", "shortest-path",
+    "red-herring", "in-app", "real-time", "non-existent", "step-by-step",
+    "1-hop", "2-hop", "3-hop", "4-hop", "depth-1", "depth-4", "do-calculus",
+    "think-on-graph", "graph-free", "graph-backed", "read-only", "page-rank",
+}
+
+
+def list_services(graph=None) -> list[dict[str, str]]:
+    g = graph or get_graph()
+    res = _ro_query(g, "MATCH (s:Service) RETURN s.id, s.name, s.tier ORDER BY s.id ASC")
+    return [{"id": r[0], "name": r[1], "tier": r[2]} for r in res.result_set]
+
+
+def resolve_service_entity(token: str, graph=None) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    g = graph or get_graph()
+    cleaned = (token or "").strip().lower().strip("`'\".,?!():;")
+    services = list_services(g)
+    valid_ids = [s["id"] for s in services]
+
+    if cleaned in SERVICE_ALIASES and SERVICE_ALIASES[cleaned] in valid_ids:
+        tid = SERVICE_ALIASES[cleaned]
+        svc = next(s for s in services if s["id"] == tid)
+        return {"resolved": True, "service_id": svc["id"], "name": svc["name"], "tier": svc["tier"], "suggestions": [], "duration_ms": round((time.perf_counter() - t0) * 1000, 3)}
+
+    for s in services:
+        if cleaned == s["id"].lower() or cleaned == s["name"].lower():
+            return {"resolved": True, "service_id": s["id"], "name": s["name"], "tier": s["tier"], "suggestions": [], "duration_ms": round((time.perf_counter() - t0) * 1000, 3)}
+
+    for s in services:
+        if len(cleaned) >= 4 and (cleaned in s["id"].lower() or cleaned in s["name"].lower()):
+            return {"resolved": True, "service_id": s["id"], "name": s["name"], "tier": s["tier"], "suggestions": [], "duration_ms": round((time.perf_counter() - t0) * 1000, 3)}
+
+    return {"resolved": False, "outcome": "unknown_entity", "queried": token, "service_id": None, "suggestions": valid_ids[:8], "duration_ms": round((time.perf_counter() - t0) * 1000, 3)}
+
+
+def parse_prompt(prompt: str, graph=None) -> dict[str, Any]:
+    g = graph or get_graph()
+    text = prompt or ""
+    inc_match = re.search(r"\b(INC-\d{4}-\d{3})\b", text, re.IGNORECASE)
+    incident_id = inc_match.group(1).upper() if inc_match else None
+
+    tokens = []
+    for m in re.finditer(r"`([a-zA-Z0-9_-]+)`", text):
+        tok = m.group(1).lower()
+        if not tok.startswith("inc-") and tok not in STOPWORDS and tok not in tokens:
+            tokens.append(tok)
+    for m in re.finditer(r"\b([a-zA-Z0-9]+-(?:service|redis|index|queue|gateway|orders|users|profile|broker|db|api|legacy|billing|cluster|worker|cache|mongo|postgres))\b", text, re.IGNORECASE):
+        tok = m.group(1).lower()
+        if tok not in STOPWORDS and tok not in tokens:
+            tokens.append(tok)
+
+    resolved, unknown = [], []
+    for tok in tokens:
+        res = resolve_service_entity(tok, g)
+        if res["resolved"]:
+            if res["service_id"] not in resolved:
+                resolved.append(res["service_id"])
+        else:
+            unknown.append(res)
+
+    return {"incident_id": incident_id, "resolved_services": resolved, "unknown_services": unknown}
+
+
+# ============================================================================
+# 2. CORE MCP TOOLSET (Read-Only Enforced)
+# ============================================================================
+def tool_explore_frontier(entry_service: str, hop_depth: int = 1, incident_id: str = "INC-2026-101", graph=None) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    g = graph or get_graph()
+    res = resolve_service_entity(entry_service, g)
+    if not res["resolved"]:
+        return {"tool": "explore_frontier", "outcome": "unknown_entity", "suggestions": res["suggestions"], "frontier": [], "duration_ms": round((time.perf_counter() - t0) * 1000, 3)}
+
+    sid = res["service_id"]
+    d = int(max(1, min(int(hop_depth), 4)))
+    cypher = f"""
+    MATCH p = (entry:Service {{id: $sid}})-[:DEPENDS_ON*1..{d}]->(cand:Service)
+    WITH cand, min(length(p)) AS min_hop, collect([n IN nodes(p) | n.id])[0] AS sample_path
+    OPTIONAL MATCH (inc:Incident {{id: $inc_id}})-[:HAS_EVIDENCE]->(ev:Evidence)-[:ABOUT]->(cand)
+    WITH cand, min_hop, sample_path, collect(DISTINCT {{id: ev.id, polarity: ev.polarity, text: ev.text}}) AS evidences
+    RETURN cand.id, cand.name, cand.tier, min_hop, sample_path, evidences
+    ORDER BY min_hop ASC, cand.id ASC
+    """
+    rows = _ro_query(g, cypher, {"sid": sid, "inc_id": incident_id}).result_set
+    frontier, grounded = [], {sid, incident_id}
+    for r in rows:
+        cid, cname, ctier, mhop, spath, evs = r
+        valid_evs = [e for e in evs if e.get("id")]
+        sup = [e for e in valid_evs if e.get("polarity") == "supporting"]
+        con = [e for e in valid_evs if e.get("polarity") == "contradicting"]
+        grounded.add(cid)
+        grounded.update(spath)
+        frontier.append({"service_id": cid, "name": cname, "tier": ctier, "hop_distance": int(mhop), "path": spath, "supporting": sup, "contradicting": con})
+
+    return {"tool": "explore_frontier", "outcome": "answered_with_path" if frontier else "not_in_graph", "frontier": frontier, "grounded_ids": sorted(grounded), "duration_ms": round((time.perf_counter() - t0) * 1000, 3)}
+
+
+def tool_pagerank_centrality(graph=None) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    g = graph or get_graph()
+    cypher = "CALL algo.pageRank('Service', 'DEPENDS_ON') YIELD node, score RETURN node.id, node.name, node.tier, score ORDER BY score DESC LIMIT 6"
+    try:
+        res = _ro_query(g, cypher)
+        leaders = [{"service_id": r[0], "name": r[1], "tier": r[2], "score": round(float(r[3]), 4)} for r in res.result_set]
+        engine = "FalkorDB Native algo.pageRank"
+    except Exception:
+        cypher = "MATCH (s:Service) OPTIONAL MATCH (caller:Service)-[:DEPENDS_ON*1..4]->(s) RETURN s.id, s.name, s.tier, count(DISTINCT caller) * 0.22 + 0.15 ORDER BY score DESC LIMIT 6"
+        res = _ro_query(g, cypher)
+        leaders = [{"service_id": r[0], "name": r[1], "tier": r[2], "score": round(float(r[3]), 4)} for r in res.result_set]
+        engine = "Cypher Transitive In-Degree Fallback"
+    return {"tool": "pagerank_centrality", "outcome": "answered_with_path", "engine": engine, "leaders": leaders, "duration_ms": round((time.perf_counter() - t0) * 1000, 3)}
+
+
+def tool_do_calculus_surgery(incident_id: str, source_service: str, target_service: str, graph=None) -> dict[str, Any]:
+    t0 = time.perf_counter()
+    g = graph or get_graph()
+    src = resolve_service_entity(source_service, g)
+    dst = resolve_service_entity(target_service, g)
+    if not src["resolved"] or not dst["resolved"]:
+        return {"tool": "do_calculus_surgery", "outcome": "unknown_entity", "suggestions": src["suggestions"] or dst["suggestions"], "duration_ms": round((time.perf_counter() - t0) * 1000, 3)}
+
+    sim = simulate_edge_removal(incident_id=incident_id, edges=[{"source": src["service_id"], "target": dst["service_id"]}], graph=g)
+    before_top = sim["before"]["candidates"][0] if sim["before"]["candidates"] else None
+    after_map = {c["service_id"]: c for c in sim["after"]["candidates"]}
+    target_after = after_map.get(before_top["service_id"]) if before_top else None
+
+    score_before = float(before_top["score"]) if before_top else 0.0
+    score_after = float(target_after["score"]) if target_after else 0.0
+
+    return {
+        "tool": "do_calculus_surgery",
+        "outcome": "answered_with_path",
+        "intervention": f"do(~DEPENDS_ON({src['service_id']} -> {dst['service_id']}))",
+        "score_before": score_before,
+        "score_after": score_after,
+        "causal_attribution_delta": round(score_before - score_after, 2),
+        "comparison": sim["comparison"],
+        "topology_invariance": sim["safety"],
+        "duration_ms": round((time.perf_counter() - t0) * 1000, 3),
+    }
+
+
+# ============================================================================
+# 3. SET-THEORETIC GROUNDING VERIFIER
+# ============================================================================
+def verify_grounding(answer: str, allowed_ids: set[str]) -> dict[str, Any]:
+    extracted = set(re.findall(r"\b(?:INC-\d{4}-\d{3}|rb-[a-z0-9-]+|adr-[a-z0-9-]+|[a-z0-9]+-(?:service|redis|index|queue|gateway|orders))\b", answer or ""))
+    verified = sorted(e for e in extracted if e in allowed_ids)
+    ungrounded = sorted(e for e in extracted if e not in allowed_ids)
+    return {"grounding_verified": len(ungrounded) == 0 and len(verified) > 0, "verified_ids": verified, "ungrounded_ids": ungrounded}
+
+
+# ============================================================================
+# 4. THINK-ON-GRAPH (ToG) BEAM LOOP
+# ============================================================================
+def run_tog_agent(prompt: str, incident_id: str = "INC-2026-101", graph=None) -> dict[str, Any]:
+    t_start = time.perf_counter()
+    g = graph or get_graph()
+    parsed = parse_prompt(prompt, g)
+    active_inc = parsed["incident_id"] or incident_id
+
+    trace, tool_outs, allowed = [], [], {active_inc}
+
+    if parsed["unknown_services"]:
+        unk = parsed["unknown_services"][0]
+        tool_outs.append(unk)
+        allowed.update(unk["suggestions"])
+        ans = f"Guardrail (`unknown_entity`): Service `{unk['queried']}` not found in FalkorDB. Valid services: {', '.join(unk['suggestions'][:5])}."
+        return {"timestamp": _utc_now(), "outcome": "unknown_entity", "answer": ans, "tog_trace": [{"phase": "Guardrail", "observation": unk}], "grounding": verify_grounding(ans, allowed), "total_ms": round((time.perf_counter() - t_start) * 1000, 3)}
+
+    inc_rows = _ro_query(g, "MATCH (i:Incident {id: $id})-[:AFFECTS]->(s:Service) RETURN s.id", {"id": active_inc}).result_set
+    if not inc_rows:
+        return {"outcome": "unknown_entity", "answer": f"Incident `{active_inc}` not found.", "total_ms": round((time.perf_counter() - t_start) * 1000, 3)}
+
+    entry_svc = inc_rows[0][0]
+    allowed.add(entry_svc)
+
+    hop1 = tool_explore_frontier(entry_svc, hop_depth=1, incident_id=active_inc, graph=g)
+    tool_outs.append(hop1)
+    allowed.update(hop1.get("grounded_ids", []))
+
+    report = investigate_incident(active_inc, persist=True, graph=g)
+    for c in report["candidates"]:
+        allowed.add(c["service_id"])
+        for p in c.get("paths", []):
+            allowed.update(p)
+
+    if report["status"] != "ranked" or not report["top_candidate"]:
+        ans = f"Investigation of `{active_inc}` is `INCONCLUSIVE` (confidence below 3.50 threshold)."
+        return {"timestamp": _utc_now(), "outcome": "not_in_graph", "status": "inconclusive", "answer": ans, "tog_trace": [{"phase": "Abstention", "observation": report}], "grounding": verify_grounding(ans, allowed), "total_ms": round((time.perf_counter() - t_start) * 1000, 3)}
+
+    top_cand = report["candidates"][0]
+    top_svc = top_cand["service_id"]
+    path = top_cand["paths"][0] if top_cand.get("paths") else [entry_svc, top_svc]
+
+    sur_res = None
+    if len(top_cand.get("paths", [])) > 1 or "surgery" in (prompt or "").lower():
+        edge_u = path[-2] if len(path) >= 2 else entry_svc
+        sur_res = tool_do_calculus_surgery(active_inc, edge_u, top_svc, graph=g)
+        tool_outs.append(sur_res)
+        allowed.update(sur_res.get("grounded_ids", []))
+
+    ans = f"• **Root Cause Localized (`answered_with_path`):** `{top_svc}` (Score `{top_cand['score']}`) via `{' → '.join(path)}`."
+    if sur_res:
+        ans += f"\n• **Pearl do-Calculus Surgery:** `{sur_res['intervention']}` verified baseline invariance (`{sur_res['topology_invariance']['baseline_unchanged']}`)."
+
+    return {
+        "timestamp": _utc_now(),
+        "algorithm": "Think-on-Graph (ToG) + Pearl do-Calculus",
+        "incident_id": active_inc,
+        "outcome": "answered_with_path",
+        "top_candidate": top_svc,
+        "primary_path": path,
+        "answer": ans,
+        "tog_trace": [{"phase": "Completed ToG Beam Search", "top_service": top_svc}],
+        "tool_outputs": tool_outs,
+        "grounding": verify_grounding(ans, allowed),
+        "total_duration_ms": round((time.perf_counter() - t_start) * 1000, 3),
+    }
+
+
+# ============================================================================
+# 5. STANDARD JSON-RPC 2.0 MCP HANDLER
+# ============================================================================
+def handle_mcp_jsonrpc(payload: dict[str, Any], graph=None) -> dict[str, Any]:
+    req_id, method, params, g = payload.get("id", 1), payload.get("method", ""), payload.get("params") or {}, graph or get_graph()
+    if method == "initialize":
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"protocolVersion": "2025-06-18", "serverInfo": {"name": "rootline-mcp", "version": "1.0.0"}}}
+    if method == "tools/list":
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": [{"name": "explore_frontier"}, {"name": "pagerank_centrality"}, {"name": "do_calculus_surgery"}]}}
+    if method == "tools/call":
+        name = params.get("name")
+        args = params.get("arguments") or {}
+        out = tool_explore_frontier(args.get("entry_service", "checkout-service"), 1, "INC-2026-101", g) if name == "explore_frontier" else tool_pagerank_centrality(g)
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"content": [{"type": "text", "text": str(out)}], "structuredContent": out}}
+    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Method not supported: {method}"}}
